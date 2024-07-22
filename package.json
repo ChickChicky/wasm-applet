@@ -1,0 +1,13 @@
+{
+  "name": "wasm-applet",
+  "version": "0.0.1",
+  "description": "A project aiming to transpile Java bytecode to WebAssembly",
+  "main": "index.js",
+  "author": "ChickChicky",
+  "scripts": {
+    "start": "javac Main.java && tsx main.mts"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.3"
+  }
+}
