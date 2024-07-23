@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import { ClassFileStruct, CPFieldref, CPMethodref, CPString, ResolvedCPItem } from './structs/ClassFile.mts';
 import { decode } from './disasm.mts';
-import { repr } from './util.mts';
+import { refPath, repr } from './util.mts';
 import { CodeAttribute } from './structs/attributes/CodeAttribute.mts';
 
 const rawClassFile = fs.readFileSync('./Main.class');
@@ -61,27 +61,18 @@ class GGlobal {
     constructor (members: typeof this.members) {
         this.members = members;
     }
-
-    resolve( ...path: string[] ) : Globals|undefined {
-        let node : Globals = this;
-        for (const part of path) {
-            if ('members' in node)
-                node = node.members[part];
-            if (!node)
-                return undefined;
-        }
-        return node;
-    }
 }
 
 /**
- * Represents a global class
+ * Represents a global class instance
  */
-class GClass {
-    members: {[k:string]:Globals};
+class GInstance {
+    type: string;
+    data: {[k:string]:StackValue};
 
-    constructor (members: typeof this.members) {
-        this.members = members;
+    constructor (type: string, data: {[k:string]:StackValue}) {
+        this.type = type;
+        this.data = data;
     }
 }
 
@@ -92,10 +83,12 @@ class Frame {
     stack: StackValue[];
     args: StackValue[];
     func: GFunction;
+    thisValue: GInstance|null;
 
-    constructor (func: GFunction, args: StackValue[], stack?: StackValue[]) {
+    constructor (func: GFunction, args: StackValue[], thisValue: GInstance|null, stack?: StackValue[]) {
         this.func = func;
         this.args = args;
+        this.thisValue = thisValue;
         this.stack = stack ? stack : [];
     }
 }
@@ -118,9 +111,9 @@ class Env {
      * @param args The arguments that will be passed to the function
      * @returns The value returned from the function
      */
-    async invoke(func: GFunction, args: StackValue[]) : Promise<StackValue> {
-        const stack = [];
-        const frame = new Frame(func,args,stack);
+    async invoke(func: GFunction, args: StackValue[], thisValue: GInstance|null) : Promise<StackValue> {
+        const stack: StackValue[] = [];
+        const frame = new Frame(func,args,thisValue,stack);
         this.frames.push(frame);
         const result = func.invoke(this);
         this.frames.pop();
@@ -151,33 +144,41 @@ class GFunction {
         if (this.code instanceof CodeAttribute) {
             const frame = env.top();
             const {stack} = frame;
+            
             for (const i of dis) {
                 if ( i.name == 'getstatic' ) {
                     stack.push(classFile.resolveFieldref(i.args.index));
                 }
+                
                 else if ( i.name == 'ldc' ) {
                     stack.push(classFile.resolve(i.args.index));
                 }
+                
                 else if ( i.name == 'invokevirtual' ) {
                     const method = classFile.resolveMethodref(i.args.index);
                     if (!(method instanceof CPMethodref))
                         throw TypeError(`Expected CPMethodref, got ${repr(method)}`);
+                    
                     const [field,...args] = stack.splice(0,stack.length);
                     if (!(field instanceof CPFieldref))
                         throw TypeError(`Expected CPFieldref, got ${repr(field)}`);
+                    
                     for (let i = 0; i < args.length; i++) {
                         if (args[i] == null)
                             throw TypeError(`Argument #${i+1} is void`);
                     }
-                    // console.log(
-                    //     `Calling ${field.class.name.replace(/\//g,'.')}.${field.desc.name}.${method.desc.name}\n` +
-                    //     `   ${humanReadableDescriptor(method.desc.desc)}`
-                    // );
-                    const func = env.globals.resolve(...field.class.name.split(/\//g),field.desc.name,method.desc.name);
-                    if (!(func instanceof GFunction))
-                        throw TypeError(`Expected GFunction, got ${repr(func)}`);
-                    stack.push(await env.invoke(func,args));
+                    
+                    const methodValue = env.globals.members[refPath(method)];
+                    if (!(methodValue instanceof GFunction))
+                        throw TypeError(`Expected GFunction, got ${repr(methodValue)}`);
+                    
+                    const thisValue = env.globals.members[refPath(field)];
+                    if (!(thisValue instanceof GInstance))
+                        throw TypeError(`Expected GInstance, got ${repr(thisValue)}`);
+                    
+                    stack.push(await env.invoke(methodValue,args,thisValue));
                 }
+
                 else if ( i.name == 'return' ) {
                     return null;
                 }
@@ -188,48 +189,39 @@ class GFunction {
     }
 }
 
-type Globals = GClass | GFunction;
+type Globals = GInstance | GFunction;
 type StackValue = ResolvedCPItem|null;
 const globals = new GGlobal({
-    java : new GClass({
-        lang : new GClass({
-            System : new GClass({
-                out : new GClass({
-                    println : new GFunction(async(env)=>{
-                        const frame = env.top();
-                        const [value] = frame.args;
-                        if (value instanceof CPString)
-                            console.log(value.value);
-                        else
-                            console.log(`\x1b[3mUnsupported print argument: ${repr(value)}\x1b[23m`);
-                        return null;
-                    }),
-                })
-            })
-        })
+    'java.io.PrintStream.println' : new GFunction(async(env)=>{
+        const frame = env.top();
+        const [value] = frame.args;
+        if (value instanceof CPString)
+            console.log(value.value);
+        else
+            console.log(`\x1b[3mUnsupported print argument: ${repr(value)}\x1b[23m`);
+        return null;
     }),
-    Main : new GClass(
-        Object.fromEntries(
-            classFile.methods.map(
-                method => {
-                    const code = method.getAttribute(classFile,'Code')?.resolve(classFile);
-                    if (!(code instanceof CodeAttribute))
-                        return;
-                    return [classFile.resolveUtf8(method.nameIndex),new GFunction(code)];
-                }
-            ).filter(e=>e) as any // TODO: Fix this
-        )
+    'java.lang.System.out' : new GInstance('java.io.PrintStream',{}),
+    ...Object.fromEntries(
+        classFile.methods.map(
+            method => {
+                const code = method.getAttribute(classFile,'Code')?.resolve(classFile);
+                if (!(code instanceof CodeAttribute))
+                    return;
+                return ['Main.'+classFile.resolveUtf8(method.nameIndex),new GFunction(code)];
+            }
+        ).filter(e=>e) as any // TODO: Fix this
     )
 });
 
-const mainFunc = globals.resolve('Main','main');
+const mainFunc = globals.members['Main.main'];
 
 if (!(mainFunc instanceof GFunction))
     throw TypeError(`Expected GFunction for Main.main, got ${repr(mainFunc)}`);
 
 const env = new Env(globals);
 
-env.invoke(mainFunc,[]).then(
+env.invoke(mainFunc,[],null).then(
     res => {
         console.log('\x1b[92mFinished\x1b[39m:',res);
     }

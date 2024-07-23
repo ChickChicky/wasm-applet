@@ -46,7 +46,7 @@ export class CodeAttribute {
     code: Buffer;
     exceptionTable: ExceptionTable;
     attributes: AttributeInfo[];
-    // Implement sub-attributes:
+    // TODO : Implement sub-attributes:
     // lineNumberTable?: {startPc:number,lineNumber:number}[]
 
     constructor (maxStack: number, maxLocals: number, code: Buffer, exceptionTable: ExceptionTable, attributes: AttributeInfo[]) {

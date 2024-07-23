@@ -1,6 +1,6 @@
 {
   "name": "wasm-applet",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "A project aiming to transpile Java bytecode to WebAssembly",
   "main": "index.js",
   "author": "ChickChicky",
