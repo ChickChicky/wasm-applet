@@ -52,144 +52,47 @@ function humanReadableDescriptor( desc: string ) : string {
     return humanReadableDescriptorUtil_(desc)[1];
 }
 
-/**
- * Holds all of the global data
- */
-class GGlobal {
-    members: {[k:string]:Globals};
-
-    constructor (members: typeof this.members) {
-        this.members = members;
-    }
-}
-
-/**
- * Represents a global class instance
- */
-class GInstance {
-    type: string;
-    data: {[k:string]:StackValue};
-
-    constructor (type: string, data: {[k:string]:StackValue}) {
-        this.type = type;
-        this.data = data;
-    }
-}
-
-/**
- * Represents an execution frame, with a stack, arguments and the associated function
- */
-class Frame {
-    stack: StackValue[];
-    args: StackValue[];
-    func: GFunction;
-    thisValue: GInstance|null;
-
-    constructor (func: GFunction, args: StackValue[], thisValue: GInstance|null, stack?: StackValue[]) {
-        this.func = func;
-        this.args = args;
-        this.thisValue = thisValue;
-        this.stack = stack ? stack : [];
-    }
-}
-
-/*
- * Represents an execution environment
- */
-class Env {
-    frames: Frame[];
-    globals: GGlobal;
-
-    constructor (globals: GGlobal) {
-        this.globals = globals;
-        this.frames = [];
-    }
-
-    /**
-     * Invokes a function, and resolves whenever it finishes executing
-     * @param func The function to be called
-     * @param args The arguments that will be passed to the function
-     * @returns The value returned from the function
-     */
-    async invoke(func: GFunction, args: StackValue[], thisValue: GInstance|null) : Promise<StackValue> {
-        const stack: StackValue[] = [];
-        const frame = new Frame(func,args,thisValue,stack);
-        this.frames.push(frame);
-        const result = func.invoke(this);
-        this.frames.pop();
-        return result;
-    }
-
-    /**
-     * @returns The last frame on the stack
-     */
-    top() : Frame {
-        return this.frames[this.frames.length-1];
-    }
-}
-
-class GFunction {
-    code: CodeAttribute | ((env: Env) => Promise<StackValue>);
-
-    constructor (code: typeof this.code) {
-        this.code = code;
-    }
-
-    /**
-     * Invokes the function
-     * @param env The execution environment, it is expected to contain a frame at the top of its stack, that will be used by the callee
-     * @returns A promise resolving whenever the execution is finished, with the return value of a function
-     */
-    async invoke(env: Env) : Promise<StackValue> {
-        if (this.code instanceof CodeAttribute) {
-            const frame = env.top();
-            const {stack} = frame;
+function invoke(env: any) {
+    const frame = env.top();
+    const {stack} = frame;
+    
+    for (const i of dis) {
+        if ( i.name == 'getstatic' ) {
+            stack.push(classFile.resolveFieldref(i.args.index));
+        }
+        
+        else if ( i.name == 'ldc' ) {
+            stack.push(classFile.resolve(i.args.index));
+        }
+        
+        else if ( i.name == 'invokevirtual' ) {
+            const method = classFile.resolveMethodref(i.args.index);
+            /*if (!(method instanceof CPMethodref))
+                throw TypeError(`Expected CPMethodref, got ${repr(method)}`);
             
-            for (const i of dis) {
-                if ( i.name == 'getstatic' ) {
-                    stack.push(classFile.resolveFieldref(i.args.index));
-                }
-                
-                else if ( i.name == 'ldc' ) {
-                    stack.push(classFile.resolve(i.args.index));
-                }
-                
-                else if ( i.name == 'invokevirtual' ) {
-                    const method = classFile.resolveMethodref(i.args.index);
-                    if (!(method instanceof CPMethodref))
-                        throw TypeError(`Expected CPMethodref, got ${repr(method)}`);
-                    
-                    const [field,...args] = stack.splice(0,stack.length);
-                    if (!(field instanceof CPFieldref))
-                        throw TypeError(`Expected CPFieldref, got ${repr(field)}`);
-                    
-                    for (let i = 0; i < args.length; i++) {
-                        if (args[i] == null)
-                            throw TypeError(`Argument #${i+1} is void`);
-                    }
-                    
-                    const methodValue = env.globals.members[refPath(method)];
-                    if (!(methodValue instanceof GFunction))
-                        throw TypeError(`Expected GFunction, got ${repr(methodValue)}`);
-                    
-                    const thisValue = env.globals.members[refPath(field)];
-                    if (!(thisValue instanceof GInstance))
-                        throw TypeError(`Expected GInstance, got ${repr(thisValue)}`);
-                    
-                    stack.push(await env.invoke(methodValue,args,thisValue));
-                }
+            const [field,...args] = stack.splice(0,stack.length);
+            if (!(field instanceof CPFieldref))
+                throw TypeError(`Expected CPFieldref, got ${repr(field)}`);
 
-                else if ( i.name == 'return' ) {
-                    return null;
-                }
-            }
-            throw new Error('End of function reached without a return statement');
-        } else
-            return await this.code(env);
+            const methodValue = env.globals.members[refPath(method)];
+            if (!(methodValue instanceof GFunction))
+                throw TypeError(`Expected GFunction, got ${repr(methodValue)}`);
+            
+            const thisValue = env.globals.members[refPath(field)];
+            if (!(thisValue instanceof GInstance))
+                throw TypeError(`Expected GInstance, got ${repr(thisValue)}`);
+            
+            stack.push(await env.invoke(methodValue,args,thisValue));*/
+        }
+
+        else if ( i.name == 'return' ) {
+            return null;
+        }
     }
+    throw new Error('End of function reached without a return statement');
 }
 
-type Globals = GInstance | GFunction;
+/*type Globals = GInstance | GFunction;
 type StackValue = ResolvedCPItem|null;
 const globals = new GGlobal({
     'java.io.PrintStream.println' : new GFunction(async(env)=>{
@@ -212,17 +115,144 @@ const globals = new GGlobal({
             }
         ).filter(e=>e) as any // TODO: Fix this
     )
-});
+});*/
 
-const mainFunc = globals.members['Main.main'];
+let body = '';
+let alloc_vars: [string,boolean][] = [];
 
-if (!(mainFunc instanceof GFunction))
-    throw TypeError(`Expected GFunction for Main.main, got ${repr(mainFunc)}`);
+const DATA_FIELDREF = 0;
+const DATA_STRING = 1;
 
-const env = new Env(globals);
-
-env.invoke(mainFunc,[],null).then(
-    res => {
-        console.log('\x1b[92mFinished\x1b[39m:',res);
+function newvar(type: string) : number {
+    for (let i = 0; i < alloc_vars.length; i++) {
+        const v = alloc_vars[i];
+        if (!v[1] && v[0] == type) {
+            v[1] = true;
+            return i;
+        }
     }
-);
+    alloc_vars.push([type,true]);
+    return alloc_vars.length-1;
+}
+
+function delvar(index: number) {
+    alloc_vars[index][1] = false;
+}
+
+function resolveDataTypeId( data: ResolvedCPItem ) : number {
+    if (data instanceof CPString)
+        return DATA_STRING;
+    throw new TypeError(`Unsupported constant type ${repr(data)}`);
+}
+
+function argumentCount( desc: string ) : number {
+    let nargs = 0;
+    while (desc.length) {
+        if (desc.startsWith('[')) {
+            desc = desc.slice(1);
+        } else if (desc.startsWith('L')) {
+            const len = desc.indexOf(';');
+            desc = desc.slice(len+1);
+            nargs++;
+        } else if (desc.match(/^[ZBCSIJFD]/)) {
+            desc = desc.slice(1);
+            nargs++;
+        } else {
+            throw new SyntaxError(`Unsupported decriptor character '${desc[0]}'`);
+        }
+    }
+    return nargs;
+}
+
+for (const i of dis) {
+    if ( i.name == 'getstatic' ) {
+        body += `i32.const ${(i.args.index<<16)|DATA_FIELDREF}\n`;
+        // stack.push(classFile.resolveFieldref(i.args.index));
+    }
+    
+    else if ( i.name == 'ldc' ) {
+        body += `i32.const ${(i.args.index<<16)|resolveDataTypeId(classFile.resolve(i.args.index))}\n`;
+        // stack.push(classFile.resolve(i.args.index));
+    }
+    
+    else if ( i.name == 'invokevirtual' ) {
+        const method = classFile.resolveMethodref(i.args.index);
+        if (!(method instanceof CPMethodref))
+            throw TypeError(`Expected CPMethodref, got ${repr(method)}`);
+        
+        const desc = method.desc.desc.match(/\(.+?\)/)?.[0];
+        if (!desc)
+            throw new TypeError(`Malformed descriptor`);
+        const nargs = argumentCount(desc.slice(1,-1));
+        const size = nargs*4;
+        let vari = 0;
+        if (nargs > 0) {
+            vari = newvar('i32');
+            const varj = newvar('i32');
+            body += 
+                `global.get 0\n` +
+                `local.tee ${vari}\n` +
+                `i32.const ${size}\n` + 
+                `i32.add\n` + 
+                `global.set 0\n`
+            ;
+            for (let i = 0; i < nargs; i++) {
+                body += 
+                    `local.set ${varj}\n` +
+                    `local.get ${vari}\n` +
+                    `local.get ${varj}\n` +
+                    `i32.store\n` +
+                    `local.get ${vari}\n` +
+                    `i32.const 4\n` +
+                    `i32.add\n` +
+                    `local.set ${vari}\n`
+                ;
+            }
+            body += `local.get ${vari}\n`;
+            delvar(varj);
+        } else {
+            body += `i32.const 0\n`;
+        }
+        body += `i32.const ${i.args.index}\n`;
+        body += `call 0\n`;
+        if (nargs > 0) {
+            delvar(vari);
+            body += 
+                `global.get 0\n` +
+                `i32.const ${size}\n` + 
+                `i32.sub\n` + 
+                `global.set 0\n`
+            ;
+        }
+
+        /*const [field,...args] = stack.splice(0,stack.length);
+        if (!(field instanceof CPFieldref))
+            throw TypeError(`Expected CPFieldref, got ${repr(field)}`);
+
+        const methodValue = env.globals.members[refPath(method)];
+        if (!(methodValue instanceof GFunction))
+            throw TypeError(`Expected GFunction, got ${repr(methodValue)}`);
+        
+        const thisValue = env.globals.members[refPath(field)];
+        if (!(thisValue instanceof GInstance))
+            throw TypeError(`Expected GInstance, got ${repr(thisValue)}`);
+        
+        stack.push(await env.invoke(methodValue,args,thisValue));*/
+    }
+
+    else if ( i.name == 'return' ) {
+        body += 'return\n';
+    }
+}
+
+console.log(`(module  
+  (import "env" "invokevirtual" (func (param i32) (param i32) (param i32)))
+    
+  (memory (export "stack") 1 1)
+  (global (export "stack_pointer") (mut i32) (i32.const 0))
+
+  (func (export "main")
+    ${alloc_vars.map(([t])=>`(local ${t})`).join(' ')}
+    ${body.replace(/\n/g,'\n    ')}
+  )
+)`);
