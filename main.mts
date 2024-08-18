@@ -174,7 +174,7 @@ for (const i of dis) {
     
     else if ( i.name == 'ldc' ) {
         body += `i32.const ${(i.args.index<<16)|resolveDataTypeId(classFile.resolve(i.args.index))}\n`;
-        console.log(classFile.constantPool[i.args.index-1]);
+        // console.log(classFile.constantPool[i.args.index-1]);
         // stack.push(classFile.resolve(i.args.index));
     }
 

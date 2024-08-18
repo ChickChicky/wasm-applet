@@ -10,4 +10,5 @@ Most of the code was ported from a Javascript project inspired by Tsoding's [Jel
 ```shell
 npm install
 npm start
+./node_modules/.bin/http-server -c-1
 ```
