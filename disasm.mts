@@ -25,6 +25,12 @@ const opcodes = [
     { code: 0xB1,
         name: 'return',
     },
+    { code: 0x10,
+        name: 'bipush',
+        args: () => new struct({
+            value: new u8(),
+        }),
+    }
 ] as const;
 
 /**

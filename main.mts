@@ -3,6 +3,7 @@ import { ClassFileStruct, CPFieldref, CPMethodref, CPString, ResolvedCPItem } fr
 import { decode } from './disasm.mts';
 import { refPath, repr } from './util.mts';
 import { CodeAttribute } from './structs/attributes/CodeAttribute.mts';
+import { ConstantTypes, ConstClass, ConstDescriptor, ConstFieldref, ConstInteger, ConstMethodref, ConstString, ConstUtf8 } from './structs/Constants.mts';
 
 const rawClassFile = fs.readFileSync('./Main.class');
 
@@ -122,6 +123,7 @@ let alloc_vars: [string,boolean][] = [];
 
 const DATA_FIELDREF = 0;
 const DATA_STRING = 1;
+const DATA_INTEGER = 2;
 
 function newvar(type: string) : number {
     for (let i = 0; i < alloc_vars.length; i++) {
@@ -172,7 +174,13 @@ for (const i of dis) {
     
     else if ( i.name == 'ldc' ) {
         body += `i32.const ${(i.args.index<<16)|resolveDataTypeId(classFile.resolve(i.args.index))}\n`;
+        console.log(classFile.constantPool[i.args.index-1]);
         // stack.push(classFile.resolve(i.args.index));
+    }
+
+    else if ( i.name == 'bipush' ) {
+        classFile.constantPool.push(new ConstInteger(i.args.value));
+        body += `i32.const ${(classFile.constantPool.length<<16)|DATA_INTEGER}\n`;
     }
     
     else if ( i.name == 'invokevirtual' ) {
@@ -201,19 +209,19 @@ for (const i of dis) {
                     `local.set ${varj}\n` +
                     `local.get ${vari}\n` +
                     `local.get ${varj}\n` +
-                    `i32.store\n` +
+                    `i32.store (memory 1)\n` +
                     `local.get ${vari}\n` +
                     `i32.const 4\n` +
                     `i32.add\n` +
                     `local.set ${vari}\n`
                 ;
             }
-            body += `local.get ${vari}\n`;
             delvar(varj);
         } else {
             body += `i32.const 0\n`;
         }
         body += `i32.const ${i.args.index}\n`;
+        body += `i32.const ${nargs}\n`;
         body += `call 0\n`;
         if (nargs > 0) {
             delvar(vari);
@@ -245,11 +253,59 @@ for (const i of dis) {
     }
 }
 
-console.log(`(module  
+function encodeUint32(v: number) : Buffer {
+    const b = Buffer.alloc(4);
+    b.writeUint32LE(v);
+    return b;
+}
+
+function encodeUint16(v: number) : Buffer {
+    const b = Buffer.alloc(2);
+    b.writeUint16LE(v);
+    return b;
+}
+
+const constantPoolDataAddress = new Uint16Array(classFile.constantPool.length);
+let constantData = Buffer.alloc(0);
+
+for (let i = 0; i < classFile.constantPool.length; i++) {
+    const data = classFile.constantPool[i];
+    constantPoolDataAddress[i] = constantPoolDataAddress.byteLength+constantData.length;
+    if (data instanceof ConstUtf8) {
+        const buff = Buffer.from(data.value,'utf-8');
+        constantData = Buffer.concat([constantData,encodeUint16(buff.length),buff]);
+    }
+    else if (data instanceof ConstString) {
+        // TODO: Assign its adress to the referenced utf-8 constant
+        constantPoolDataAddress[i] = data.dataIndex;
+    }
+    // TODO: (maybe?) Take all of the indices and serialize them
+    else if (data instanceof ConstMethodref || data instanceof ConstFieldref) {
+        constantData = Buffer.concat([constantData,encodeUint16(data.classIndex),encodeUint16(data.descIndex)]);
+    }
+    else if (data instanceof ConstClass) {
+        constantPoolDataAddress[i] = data.fqnIndex;
+    }
+    else if (data instanceof ConstDescriptor) {
+        constantData = Buffer.concat([constantData,encodeUint16(data.nameIndex),encodeUint16(data.descIndex)]);
+    }
+    else if (data instanceof ConstInteger) {
+        constantData = Buffer.concat([constantData,encodeUint32(data.value)]);
+    }
+    else {
+        console.log(`\x1b[93mwarn\x1b[39m: Unsupported constant type ${repr(data)}`);
+    }
+    // console.log(i,repr(data),constantPoolDataAddress[i]);
+}
+
+fs.writeFileSync('applet.wat',`(module  
   (import "env" "invokevirtual" (func (param i32) (param i32) (param i32)))
-    
+  
+  (memory (export "constant_pool") 1 1)
   (memory (export "stack") 1 1)
   (global (export "stack_pointer") (mut i32) (i32.const 0))
+
+  (data (memory 0) (i32.const 0) "${Array.from(Buffer.concat([...Array.from(constantPoolDataAddress).map(a=>encodeUint16(a)),constantData])).map(b=>`\\${b.toString(16).padStart(2,'0')}`).join('')}")
 
   (func (export "main")
     ${alloc_vars.map(([t])=>`(local ${t})`).join(' ')}
