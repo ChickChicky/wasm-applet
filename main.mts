@@ -53,71 +53,6 @@ function humanReadableDescriptor( desc: string ) : string {
     return humanReadableDescriptorUtil_(desc)[1];
 }
 
-function invoke(env: any) {
-    const frame = env.top();
-    const {stack} = frame;
-    
-    for (const i of dis) {
-        if ( i.name == 'getstatic' ) {
-            stack.push(classFile.resolveFieldref(i.args.index));
-        }
-        
-        else if ( i.name == 'ldc' ) {
-            stack.push(classFile.resolve(i.args.index));
-        }
-        
-        else if ( i.name == 'invokevirtual' ) {
-            const method = classFile.resolveMethodref(i.args.index);
-            /*if (!(method instanceof CPMethodref))
-                throw TypeError(`Expected CPMethodref, got ${repr(method)}`);
-            
-            const [field,...args] = stack.splice(0,stack.length);
-            if (!(field instanceof CPFieldref))
-                throw TypeError(`Expected CPFieldref, got ${repr(field)}`);
-
-            const methodValue = env.globals.members[refPath(method)];
-            if (!(methodValue instanceof GFunction))
-                throw TypeError(`Expected GFunction, got ${repr(methodValue)}`);
-            
-            const thisValue = env.globals.members[refPath(field)];
-            if (!(thisValue instanceof GInstance))
-                throw TypeError(`Expected GInstance, got ${repr(thisValue)}`);
-            
-            stack.push(await env.invoke(methodValue,args,thisValue));*/
-        }
-
-        else if ( i.name == 'return' ) {
-            return null;
-        }
-    }
-    throw new Error('End of function reached without a return statement');
-}
-
-/*type Globals = GInstance | GFunction;
-type StackValue = ResolvedCPItem|null;
-const globals = new GGlobal({
-    'java.io.PrintStream.println' : new GFunction(async(env)=>{
-        const frame = env.top();
-        const [value] = frame.args;
-        if (value instanceof CPString)
-            console.log(value.value);
-        else
-            console.log(`\x1b[3mUnsupported print argument: ${repr(value)}\x1b[23m`);
-        return null;
-    }),
-    'java.lang.System.out' : new GInstance('java.io.PrintStream',{}),
-    ...Object.fromEntries(
-        classFile.methods.map(
-            method => {
-                const code = method.getAttribute(classFile,'Code')?.resolve(classFile);
-                if (!(code instanceof CodeAttribute))
-                    return;
-                return ['Main.'+classFile.resolveUtf8(method.nameIndex),new GFunction(code)];
-            }
-        ).filter(e=>e) as any // TODO: Fix this
-    )
-});*/
-
 let body = '';
 let alloc_vars: [string,boolean][] = [];
 
@@ -210,13 +145,10 @@ function encodeData(kind: number, data: number) : number {
 for (const i of dis) {
     if ( i.name == 'getstatic' ) {
         body += `i32.const ${encodeData(DATA_FIELDREF, i.args.index)}\n`;
-        // stack.push(classFile.resolveFieldref(i.args.index));
     }
     
     else if ( i.name == 'ldc' ) {
         body += `i32.const ${encodeData(resolveDataTypeId(classFile.resolve(i.args.index)), i.args.index)}\n`;
-        // console.log(classFile.constantPool[i.args.index-1]);
-        // stack.push(classFile.resolve(i.args.index));
     }
 
     else if ( i.name == 'bipush' ) {
