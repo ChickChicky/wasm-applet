@@ -121,9 +121,11 @@ const globals = new GGlobal({
 let body = '';
 let alloc_vars: [string,boolean][] = [];
 
-const DATA_FIELDREF = 0;
-const DATA_STRING = 1;
-const DATA_INTEGER = 2;
+const DATA_NULL = 0;
+const DATA_FIELDREF = 1;
+const DATA_STRING = 2;
+const DATA_INTEGER = 3;
+const DATA_HEAP = 4;
 
 function newvar(type: string) : number {
     for (let i = 0; i < alloc_vars.length; i++) {
@@ -166,21 +168,60 @@ function argumentCount( desc: string ) : number {
     return nargs;
 }
 
+const idx = {
+    global: { _: 0,
+
+    },
+    memory: { _: 0,
+
+    },
+    function : { _: 0,
+
+    },
+};
+
+function sidx(kind: keyof typeof idx, name: string) : number {
+    return idx[kind][name]=idx[kind]._++;
+}
+
+function gidx(name: string) : number {
+    for (const i of Object.values(idx)) if (name in i) {
+        return i[name];
+    }
+    throw new ReferenceError(`Undefined WASM variable '${name}'`);
+}
+
+const body_top = `
+  (import (;${sidx('function','invokevirtual')};) "env" "invokevirtual" (func (param i32) (param i32) (param i32)))
+  (memory (;${sidx('memory','constant_pool')};) (export "constant_pool") 1 1)
+  (memory (;${sidx('memory','stack')};) (export "stack") 1 1)
+
+  (global (;${sidx('global','stack_pointer')};) (export "stack_pointer") (mut i32) (i32.const 0))
+  (global (;${sidx('global','local_0')};) (export "local_0") (mut i32) (i32.const 0))
+  (global (;${sidx('global','local_1')};) (export "local_1") (mut i32) (i32.const 0))
+  (global (;${sidx('global','local_2')};) (export "local_2") (mut i32) (i32.const 0))
+  (global (;${sidx('global','local_3')};) (export "local_3") (mut i32) (i32.const 0))
+`;
+
+function encodeData(kind: number, data: number) : number {
+    return (data << 8) | kind
+}
+
 for (const i of dis) {
     if ( i.name == 'getstatic' ) {
-        body += `i32.const ${(i.args.index<<16)|DATA_FIELDREF}\n`;
+        body += `i32.const ${encodeData(DATA_FIELDREF, i.args.index)}\n`;
         // stack.push(classFile.resolveFieldref(i.args.index));
     }
     
     else if ( i.name == 'ldc' ) {
-        body += `i32.const ${(i.args.index<<16)|resolveDataTypeId(classFile.resolve(i.args.index))}\n`;
+        body += `i32.const ${encodeData(resolveDataTypeId(classFile.resolve(i.args.index)), i.args.index)}\n`;
         // console.log(classFile.constantPool[i.args.index-1]);
         // stack.push(classFile.resolve(i.args.index));
     }
 
     else if ( i.name == 'bipush' ) {
         classFile.constantPool.push(new ConstInteger(i.args.value));
-        body += `i32.const ${(classFile.constantPool.length<<16)|DATA_INTEGER}\n`;
+        body += `i32.const ${encodeData(DATA_INTEGER, classFile.constantPool.length)}\n`;
     }
     
     else if ( i.name == 'invokevirtual' ) {
@@ -197,19 +238,19 @@ for (const i of dis) {
         if (nargs > 0) {
             vari = newvar('i32');
             const varj = newvar('i32');
-            body += 
-                `global.get 0\n` +
+            body +=
+                `global.get ${gidx('stack_pointer')}\n` +
                 `local.tee ${vari}\n` +
                 `i32.const ${size}\n` + 
                 `i32.add\n` + 
-                `global.set 0\n`
+                `global.set ${gidx('stack_pointer')}\n`
             ;
             for (let i = 0; i < nargs; i++) {
-                body += 
+                body +=
                     `local.set ${varj}\n` +
                     `local.get ${vari}\n` +
                     `local.get ${varj}\n` +
-                    `i32.store (memory 1)\n` +
+                    `i32.store (memory ${gidx('stack')})\n` +
                     `local.get ${vari}\n` +
                     `i32.const 4\n` +
                     `i32.add\n` +
@@ -220,32 +261,36 @@ for (const i of dis) {
         } else {
             body += `i32.const 0\n`;
         }
-        body += `i32.const ${i.args.index}\n`;
-        body += `i32.const ${nargs}\n`;
-        body += `call 0\n`;
+        body += 
+            `i32.const ${i.args.index}\n` +
+            `i32.const ${nargs}\n` +
+            `call ${gidx('invokevirtual')}\n`
+        ;
         if (nargs > 0) {
             delvar(vari);
-            body += 
-                `global.get 0\n` +
+            body +=
+                `global.get ${gidx('stack_pointer')}\n` +
                 `i32.const ${size}\n` + 
                 `i32.sub\n` + 
-                `global.set 0\n`
+                `global.set ${gidx('stack_pointer')}\n`
             ;
         }
+    }
 
-        /*const [field,...args] = stack.splice(0,stack.length);
-        if (!(field instanceof CPFieldref))
-            throw TypeError(`Expected CPFieldref, got ${repr(field)}`);
+    else if ( i.name == 'aload_0' ) {
+        body += `global.get ${gidx('local_0')}\n`;
+    }
 
-        const methodValue = env.globals.members[refPath(method)];
-        if (!(methodValue instanceof GFunction))
-            throw TypeError(`Expected GFunction, got ${repr(methodValue)}`);
-        
-        const thisValue = env.globals.members[refPath(field)];
-        if (!(thisValue instanceof GInstance))
-            throw TypeError(`Expected GInstance, got ${repr(thisValue)}`);
-        
-        stack.push(await env.invoke(methodValue,args,thisValue));*/
+    else if ( i.name == 'aload_1' ) {
+        body += `global.get ${gidx('local_1')}\n`;
+    }
+
+    else if ( i.name == 'aload_2' ) {
+        body += `global.get ${gidx('local_2')}\n`;
+    }
+
+    else if ( i.name == 'aload_3' ) {
+        body += `global.get ${gidx('local_3')}\n`;
     }
 
     else if ( i.name == 'return' ) {
@@ -299,13 +344,9 @@ for (let i = 0; i < classFile.constantPool.length; i++) {
 }
 
 fs.writeFileSync('applet.wat',`(module  
-  (import "env" "invokevirtual" (func (param i32) (param i32) (param i32)))
-  
-  (memory (export "constant_pool") 1 1)
-  (memory (export "stack") 1 1)
-  (global (export "stack_pointer") (mut i32) (i32.const 0))
+  ${body_top}
 
-  (data (memory 0) (i32.const 0) "${Array.from(Buffer.concat([...Array.from(constantPoolDataAddress).map(a=>encodeUint16(a)),constantData])).map(b=>`\\${b.toString(16).padStart(2,'0')}`).join('')}")
+  (data (memory ${gidx('constant_pool')}) (i32.const 0) "${Array.from(Buffer.concat([...Array.from(constantPoolDataAddress).map(a=>encodeUint16(a)),constantData])).map(b=>`\\${b.toString(16).padStart(2,'0')}`).join('')}")
 
   (func (export "main")
     ${alloc_vars.map(([t])=>`(local ${t})`).join(' ')}

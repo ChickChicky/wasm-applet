@@ -1,9 +1,11 @@
 /** @type {HTMLDivElement} */
 const outDiv = document.querySelector('#out');
 
-const DATA_FIELDREF = 0;
-const DATA_STRING = 1;
-const DATA_INTEGER = 2;
+const DATA_NULL = 0;
+const DATA_FIELDREF = 1;
+const DATA_STRING = 2;
+const DATA_INTEGER = 3;
+const DATA_HEAP = 4;
 
 function cpUtf8(index) {
     const idx = constantPool.getUint16((index-1)*2,true);
@@ -49,23 +51,33 @@ function cpRef(index) {
 }
 
 function cpData(d) {
-    const {type,index} = cpInfo(d);
+    const {type,data} = decodeData(d);
+    if (type == DATA_NULL) {
+        return null;
+    }
     if (type == DATA_FIELDREF) {
-        return cpRef(index);
+        return cpRef(data);
     }
     if (type == DATA_STRING) {
-        return cpString(index);
+        return cpString(data);
     }
     if (type == DATA_INTEGER) {
-        return cpInteger(index);
+        return cpInteger(data);
     }
-    throw new TypeError(`Unsupported constant pool data type ${type}`);
+    if (type == DATA_HEAP) {
+        return heap[data];
+    }
+    throw new TypeError(`Unsupported data type ${type}`);
 }
 
-function cpInfo(d) {
+function encodeData(kind, data) {
+    return (data << 8) | kind
+}
+
+function decodeData(d) {
     return {
-        type:  d & 0xFFFF,
-        index: d >> 16,
+        type:  d & 0xFF,
+        data: d >> 8,
     };
 }
 
@@ -222,6 +234,10 @@ var stack;
 /** @type {WebAssembly.Global} */
 var stackPointer;
 
+var heap = {
+    0 : [ "hello", " world!" ]
+};
+
 fetch('applet.wasm')
     .then(result=>result.arrayBuffer())
     .then(
@@ -231,6 +247,7 @@ fetch('applet.wasm')
             stackPointer = instance.exports.stack_pointer;
             stack = new DataView(instance.exports.stack.buffer);
             constantPool = new DataView(instance.exports.constant_pool.buffer);
+            instance.exports.local_0.value = encodeData(DATA_HEAP, 0);
             instance.exports.main();
         }
     )

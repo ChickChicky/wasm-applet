@@ -5,7 +5,8 @@
   "main": "index.js",
   "author": "ChickChicky",
   "scripts": {
-    "start": "javac Main.java && tsx main.mts && wat2wasm applet.wat -o applet.wasm --enable-multi-memory"
+    "start": "javac Main.java && tsx main.mts && wat2wasm applet.wat -o applet.wasm --enable-multi-memory",
+    "serve": "npx http-server -c-1"
   },
   "devDependencies": {
     "@types/node": "^22.3.0",

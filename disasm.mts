@@ -30,7 +30,19 @@ const opcodes = [
         args: () => new struct({
             value: new u8(),
         }),
-    }
+    },
+    { code: 0x2A,
+        name: 'aload_0',
+    },
+    { code: 0x2B,
+        name: 'aload_1',
+    },
+    { code: 0x2C,
+        name: 'aload_2',
+    },
+    { code: 0x2D,
+        name: 'aload_3',
+    },
 ] as const;
 
 /**
